@@ -1,286 +1,104 @@
-
 import socket
 import time
-import subprocess
-import shutil
-import re
+from utils.helpers import is_ip_address, run_command
 
+def resolve_host_addresses(domain: str) -> dict:
+    start_time = time.perf_counter()
+    try:
+        # AF_UNSPEC fetches both IPv4 (AF_INET) and IPv6 (AF_INET6)
+        addr_info = socket.getaddrinfo(domain, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-# Supported DNS record types
-SUPPORTED_RECORD_TYPES = {
-    "A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR"
-}
+        ipv4_addresses = sorted({
+            info[4][0] for info in addr_info if info[0] == socket.AF_INET
+        })
+        ipv6_addresses = sorted({
+            info[4][0] for info in addr_info if info[0] == socket.AF_INET6
+        })
 
-
-def validate_hostname(hostname):
-    """Validate basic hostname input."""
-
-    if not isinstance(hostname, str) or not hostname.strip():
-        return False
-
-    return True
-
-
-def resolve_hostname(hostname):
-    """
-    Resolve a hostname using the operating system's
-    name resolution mechanism.
-
-    Returns IPv4, IPv6 addresses and resolution time.
-    """
-
-    if not validate_hostname(hostname):
         return {
-            "hostname": hostname,
+            "success": True,
+            "ipv4": ipv4_addresses,
+            "ipv6": ipv6_addresses,
+            "latency_ms": elapsed_ms,
+            "error": None
+        }
+    except socket.gaierror as e:
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        error_map = {
+            socket.EAI_NONAME: f"NXDOMAIN or invalid hostname: '{domain}' could not be resolved.",
+            socket.EAI_AGAIN: f"Temporary DNS failure (SERVFAIL / timeout) resolving '{domain}'.",
+            socket.EAI_NODATA: f"Valid domain '{domain}', but no A/AAAA records found."
+        }
+        reason = error_map.get(e.errno, f"DNS resolution error ({e.errno}): {e.strerror}")
+        return {
             "success": False,
             "ipv4": [],
             "ipv6": [],
-            "resolution_time_ms": 0.0,
-            "error": "Hostname must be a non-empty string"
+            "latency_ms": elapsed_ms,
+            "error": reason
         }
 
-    hostname = hostname.strip()
-    start_time = time.perf_counter()
+def query_dns_records(domain: str) -> dict:
+    record_types = ["CNAME", "MX", "NS", "TXT"]
+    records = {}
 
-    try:
-        results = socket.getaddrinfo(
-            hostname,
-            None,
-            family=socket.AF_UNSPEC,
-            type=socket.SOCK_STREAM
-        )
+    for rtype in record_types:
+        success, output = run_command(["dig", "+short", domain, rtype], timeout=4)
+        if success and output:
+            records[rtype] = [line.strip() for line in output.splitlines() if line.strip()]
+        else:
+            records[rtype] = []
 
-        ipv4_addresses = set()
-        ipv6_addresses = set()
+    return records
 
-        for result in results:
+def run_dns_diagnostics(target: str) -> dict:
+    target = target.strip()
 
-            family = result[0]
-            address = result[4][0]
-
-            if family == socket.AF_INET:
-                ipv4_addresses.add(address)
-
-            elif family == socket.AF_INET6:
-                ipv6_addresses.add(address)
-
-        elapsed = (time.perf_counter() - start_time) * 1000
-
+    # If user supplied a raw IP address, DNS lookup is unnecessary
+    if is_ip_address(target):
         return {
-            "hostname": hostname,
-            "success": True,
-            "ipv4": sorted(ipv4_addresses),
-            "ipv6": sorted(ipv6_addresses),
-            "resolution_time_ms": round(elapsed, 2),
+            "module": "dns_diagnostics",
+            "status": "SKIPPED",
+            "data": {
+                "target": target,
+                "is_ip": True,
+                "ipv4": [target] if ":" not in target else [],
+                "ipv6": [target] if ":" in target else [],
+                "latency_ms": 0.0,
+                "records": {}
+            },
             "error": None
         }
 
-    except socket.gaierror as error:
-
-        elapsed = (time.perf_counter() - start_time) * 1000
-
+    resolution = resolve_host_addresses(target)
+    if not resolution["success"]:
         return {
-            "hostname": hostname,
-            "success": False,
-            "ipv4": [],
-            "ipv6": [],
-            "resolution_time_ms": round(elapsed, 2),
-            "error": str(error)
+            "module": "dns_diagnostics",
+            "status": "FAIL",
+            "data": {
+                "target": target,
+                "is_ip": False,
+                "ipv4": [],
+                "ipv6": [],
+                "latency_ms": resolution["latency_ms"],
+                "records": {}
+            },
+            "error": resolution["error"]
         }
 
+    records = query_dns_records(target)
 
-def query_dns_record(hostname, record_type="A", nameserver=None):
-    """
-    Query a specific DNS record using the Linux dig utility.
-
-    Optionally specify a DNS nameserver.
-    """
-
-    if not validate_hostname(hostname):
-        return {
-            "hostname": hostname,
-            "record_type": record_type,
-            "nameserver": nameserver,
-            "success": False,
-            "status": None,
-            "answers": [],
-            "query_time_ms": None,
-            "error": "Hostname must be a non-empty string"
-        }
-
-    record_type = record_type.upper()
-
-    if record_type not in SUPPORTED_RECORD_TYPES:
-        return {
-            "hostname": hostname,
-            "record_type": record_type,
-            "nameserver": nameserver,
-            "success": False,
-            "status": None,
-            "answers": [],
-            "query_time_ms": None,
-            "error": "Unsupported DNS record type"
-        }
-
-    # Check whether dig is installed
-    if shutil.which("dig") is None:
-        return {
-            "hostname": hostname,
-            "record_type": record_type,
-            "nameserver": nameserver,
-            "success": False,
-            "status": None,
-            "answers": [],
-            "query_time_ms": None,
-            "error": "dig utility is not installed"
-        }
-
-    # Construct command safely using argument list
-    command = ["dig"]
-
-    if nameserver:
-        command.append(f"@{nameserver}")
-
-    command.extend([
-        hostname.strip(),
-        record_type,
-        "+time=3",
-        "+tries=1",
-        "+noall",
-        "+comments",
-        "+answer",
-        "+stats"
-    ])
-
-    try:
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False
-        )
-
-        output = result.stdout
-
-        # Extract DNS response status
-        status_match = re.search(
-            r"status:\s*(\w+)",
-            output
-        )
-
-        status = (
-            status_match.group(1)
-            if status_match
-            else None
-        )
-
-        # Extract DNS query time
-        time_match = re.search(
-            r"Query time:\s*(\d+)\s*msec",
-            output
-        )
-
-        query_time = (
-            float(time_match.group(1))
-            if time_match
-            else None
-        )
-
-        # Extract answer records
-        answers = []
-
-        answer_section = False
-
-        for line in output.splitlines():
-
-            if line.startswith(";; ANSWER SECTION:"):
-                answer_section = True
-                continue
-
-            if answer_section:
-
-                if not line.strip() or line.startswith(";;"):
-                    break
-
-                answers.append(line.strip())
-
-        # Determine whether a DNS answer was received
-        success = status == "NOERROR" and len(answers) > 0
-
-        if status == "NXDOMAIN":
-            error = "Domain does not exist"
-
-        elif status == "NOERROR" and not answers:
-            error = "No records found for the requested record type"
-
-        elif status != "NOERROR":
-            error = f"DNS query returned status: {status}"
-
-        else:
-            error = None
-
-        return {
-            "hostname": hostname,
-            "record_type": record_type,
-            "nameserver": nameserver or "System default",
-            "success": success,
-            "status": status,
-            "answers": answers,
-            "query_time_ms": query_time,
-            "error": error
-        }
-
-    except subprocess.TimeoutExpired:
-
-        return {
-            "hostname": hostname,
-            "record_type": record_type,
-            "nameserver": nameserver,
-            "success": False,
-            "status": None,
-            "answers": [],
-            "query_time_ms": None,
-            "error": "DNS query timed out"
-        }
-
-    except OSError as error:
-
-        return {
-            "hostname": hostname,
-            "record_type": record_type,
-            "nameserver": nameserver,
-            "success": False,
-            "status": None,
-            "answers": [],
-            "query_time_ms": None,
-            "error": str(error)
-        }
-
-
-def compare_dns_resolvers(hostname, record_type="A"):
-    """
-    Compare DNS responses from the system default resolver,
-    Google DNS and Cloudflare DNS.
-    """
-
-    resolvers = [
-        None,
-        "8.8.8.8",
-        "1.1.1.1"
-    ]
-
-    results = []
-
-    for resolver in resolvers:
-
-        result = query_dns_record(
-            hostname,
-            record_type,
-            resolver
-        )
-
-        results.append(result)
-
-    return results
+    return {
+        "module": "dns_diagnostics",
+        "status": "PASS",
+        "data": {
+            "target": target,
+            "is_ip": False,
+            "ipv4": resolution["ipv4"],
+            "ipv6": resolution["ipv6"],
+            "latency_ms": resolution["latency_ms"],
+            "records": records
+        },
+        "error": None
+    }
