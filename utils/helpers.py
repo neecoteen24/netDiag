@@ -1,5 +1,6 @@
 import ipaddress
 import subprocess
+from urllib.parse import urlparse
 
 def run_command(cmd: list[str], timeout: int = 5) -> tuple[bool, str]:
     try:
@@ -14,7 +15,8 @@ def run_command(cmd: list[str], timeout: int = 5) -> tuple[bool, str]:
     except FileNotFoundError:
         return False, f"Command not found: {cmd[0]}"
     except subprocess.CalledProcessError as e:
-        return False, f"Command failed ({e.returncode}): {e.stderr.strip()}"
+        err_output = e.stdout.strip() if e.stdout.strip() else e.stderr.strip()
+        return False, err_output if err_output else f"Command failed with exit code {e.returncode}"
     except subprocess.TimeoutExpired:
         return False, f"Command timed out after {timeout}s: {' '.join(cmd)}"
 
@@ -24,3 +26,10 @@ def is_ip_address(target: str) -> bool:
         return True
     except ValueError:
         return False
+
+def extract_hostname(target: str) -> str:
+    target = target.strip()
+    if "://" not in target:
+        target = f"http://{target}"
+    parsed = urlparse(target)
+    return parsed.hostname or target
