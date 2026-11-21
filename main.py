@@ -15,6 +15,44 @@ def parse_ports(port_str: str) -> list[int]:
     return [int(p.strip()) for p in port_str.split(",") if p.strip().isdigit()]
 
 
+def run_diagnostics(target: str, ports: list[int] | None = None, include_udp: bool = False,
+                    include_trace: bool = True, scheme: str = "https") -> dict:
+    hostname = extract_hostname(target)
+    ports = ports or DEFAULT_PORTS
+
+    net_result = collect_network_info()
+    dns_result = run_dns_diagnostics(hostname)
+    candidate_ips = dns_result["data"].get("ipv4") or dns_result["data"].get("ipv6") or []
+    conn_result = run_connectivity_diagnostics(candidate_ips, include_trace=include_trace)
+    tcp_result = run_tcp_diagnostics(candidate_ips, ports=ports, include_udp_dns_check=include_udp)
+
+    if candidate_ips and 443 in ports:
+        tls_result = run_tls_diagnostics(hostname, candidate_ips[0], port=443)
+    else:
+        tls_result = {
+            "module": "tls_diagnostics",
+            "status": "SKIPPED",
+            "data": {},
+            "error": "Skipped (no resolved IP or port 443 not in target ports)."
+        }
+
+    if candidate_ips:
+        http_result = run_http_diagnostics(target, scheme=scheme)
+    else:
+        http_result = {
+            "module": "http_diagnostics",
+            "status": "SKIPPED",
+            "data": {},
+            "error": "Skipped due to DNS resolution failure."
+        }
+
+    return {
+        "target": target,
+        "resolved_hostname": hostname,
+        "diagnostics": [net_result, dns_result, conn_result, tcp_result, tls_result, http_result]
+    }
+
+
 def main():
     logger = setup_logger()
     parser = argparse.ArgumentParser(description="NetDiag - Network Diagnostics Toolkit")

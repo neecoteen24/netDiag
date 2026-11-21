@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NetDiag — Network Diagnostics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="NetDiag home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span>NetDiag</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-item active" href="#"><span class="nav-icon">⌁</span>Diagnostics</a>
+        <a class="nav-item" href="#results"><span class="nav-icon">◫</span>Results</a>
+      </nav>
+      <div class="sidebar-status">
+        <span class="status-dot"></span>
+        <div><strong>System ready</strong><small>All modules available</small></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">NETWORK OPERATIONS</p>
+          <h1>Diagnostics</h1>
+        </div>
+        <button class="icon-button" id="themeToggle" aria-label="Toggle theme">◐</button>
+      </header>
+
+      <section class="diagnostic-panel">
+        <div class="panel-heading">
+          <div class="panel-title">
+            <span class="panel-icon">◎</span>
+            <div><h2>Run network check</h2><p>Test DNS, connectivity, ports, TLS, and HTTP</p></div>
+          </div>
+        </div>
+
+        <form id="diagnosticForm">
+          <div class="target-row">
+            <label for="target">Target</label>
+            <div class="target-control">
+              <span class="target-icon">↗</span>
+              <input id="target" name="target" type="text" value="google.com" placeholder="example.com or 192.168.1.1" autocomplete="off" required>
+              <button class="run-button" id="runButton" type="submit"><span>Run diagnostics</span><b>→</b></button>
+            </div>
+          </div>
+
+          <div class="options-row">
+            <label class="option-field">
+              <span>Ports</span>
+              <input id="ports" name="ports" value="80,443" placeholder="80,443,22">
+            </label>
+            <label class="option-field">
+              <span>Scheme</span>
+              <select id="scheme" name="scheme">
+                <option value="https">HTTPS</option>
+                <option value="http">HTTP</option>
+              </select>
+            </label>
+            <label class="check-option"><input id="udpProbe" type="checkbox"><span></span>UDP DNS probe</label>
+            <label class="check-option"><input id="noTrace" type="checkbox"><span></span>Skip traceroute</label>
+          </div>
+        </form>
+      </section>
+
+      <section id="results" class="results-section">
+        <div class="results-toolbar">
+          <div><p class="eyebrow">LATEST RUN</p><h2 id="resultTitle">Ready to scan</h2></div>
+          <button class="ghost-button" id="exportButton" hidden>Export JSON</button>
+        </div>
+        <div id="emptyState" class="empty-state">
+          <div class="empty-radar"><span></span><i></i></div>
+          <h3>No diagnostics yet</h3>
+          <p>Enter a target above and run your first network check.</p>
+        </div>
+        <div id="errorState" class="error-state" hidden></div>
+        <div id="summaryGrid" class="summary-grid" hidden></div>
+        <div id="diagnosticsHeading" class="diagnostics-heading" hidden>
+          <p class="eyebrow">MODULE RESULTS</p>
+          <h3>Diagnostics</h3>
+        </div>
+        <div id="diagnosticsGrid" class="diagnostics-grid" hidden></div>
+        <div id="jsonPanel" class="json-panel" hidden>
+          <button class="json-toggle" id="jsonToggle" type="button" aria-expanded="false">
+            <span>View raw JSON</span><b>+</b>
+          </button>
+          <pre id="jsonOutput" hidden></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

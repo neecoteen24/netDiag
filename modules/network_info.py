@@ -1,4 +1,8 @@
 import json
+import platform
+import re
+import socket
+import subprocess
 
 from utils.helpers import run_command
 
@@ -7,6 +11,42 @@ def get_interfaces() -> list[dict]:
     """
     Retrieve network interfaces and their IP addresses.
     """
+    if platform.system() == "Windows":
+        success, output = run_command(["ipconfig", "/all"])
+        if not success:
+            return []
+
+        interfaces = []
+        current = None
+        for line in output.splitlines():
+            line = line.rstrip()
+            if line and not line.startswith((" ", "\t")) and ":" in line:
+                name = line.split(":", 1)[0].strip()
+                if name:
+                    current = {
+                        "name": name,
+                        "state": "UP",
+                        "mac": None,
+                        "ipv4": [],
+                        "ipv6": []
+                    }
+                    interfaces.append(current)
+                continue
+            if not current:
+                continue
+            match = re.search(r"(?:IPv4 Address|Autoconfiguration IPv4 Address)[ .:]*([\d.]+)", line, re.I)
+            if match:
+                current["ipv4"].append(match.group(1))
+                continue
+            match = re.search(r"IPv6 Address[ .:]*([0-9a-f:]+)", line, re.I)
+            if match:
+                current["ipv6"].append(match.group(1))
+                continue
+            match = re.search(r"Physical Address[ .:]*([0-9A-F-:]+)", line, re.I)
+            if match:
+                current["mac"] = match.group(1)
+        return interfaces
+
     success, output = run_command(["ip", "-j", "addr", "show"])
 
     if not success:
@@ -63,6 +103,20 @@ def get_default_gateway() -> dict:
         "interface": None
     }
 
+    if platform.system() == "Windows":
+        success, output = run_command(["route", "print", "0.0.0.0"])
+        if success:
+            for line in output.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[0] == "0.0.0.0" and parts[1] == "0.0.0.0":
+                    default_gateway["gateway"] = parts[2]
+                    try:
+                        interface_index = int(parts[3])
+                        default_gateway["interface"] = str(interface_index)
+                    except ValueError:
+                        default_gateway["interface"] = parts[3]
+        return default_gateway
+
     success, output = run_command(
         ["ip", "-j", "route", "show", "default"]
     )
@@ -89,6 +143,15 @@ def get_dns_resolvers() -> list[str]:
     Read configured DNS nameservers from /etc/resolv.conf.
     """
     resolvers = []
+
+    if platform.system() == "Windows":
+        success, output = run_command(["ipconfig", "/all"])
+        if success:
+            for line in output.splitlines():
+                match = re.search(r"DNS Servers[ .:]*([0-9a-fA-F:.]+)", line)
+                if match:
+                    resolvers.append(match.group(1).strip())
+        return list(dict.fromkeys(resolvers))
 
     try:
         with open("/etc/resolv.conf", "r", encoding="utf-8") as file:
